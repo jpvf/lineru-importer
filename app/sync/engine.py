@@ -131,6 +131,7 @@ class SyncEngine:
                 local = get_local_conn()
                 try:
                     with local.cursor() as cur:
+                        cur.execute("SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'")
                         cur.execute("SET FOREIGN_KEY_CHECKS=0")
                         cur.execute(f"DROP TABLE IF EXISTS `{name}`")
                         cur.execute(ddl)
