@@ -1,8 +1,12 @@
 """Core sync logic: schema, data, views, routines."""
+import logging
 import re
 import threading
 import time
+import traceback
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from app.aurora.connection import get_aurora_conn
 from app.aurora.discovery import (
@@ -93,6 +97,8 @@ class SyncEngine:
             notify(f"🛑 *Aurora Sync cancelled* (job #{self.job_id})")
 
         except Exception as e:
+            tb = traceback.format_exc()
+            logger.error("Sync job %s failed:\n%s", self.job_id, tb)
             repo.update_job(
                 self.job_id,
                 status="error",
