@@ -1,7 +1,6 @@
 from fastapi import APIRouter
 from app.state import repository as repo
 from app.sync import worker
-from app.aurora.twingate import get_connectivity_status
 
 router = APIRouter(prefix="/api/progress", tags=["progress"])
 
