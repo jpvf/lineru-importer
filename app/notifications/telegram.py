@@ -1,11 +1,12 @@
 import httpx
-from app.config import settings
+from app.state import repository as repo
 
 
 def notify(message: str) -> bool:
     """Send a Telegram message. Returns True on success."""
-    token = settings.telegram_bot_token
-    chat_id = settings.telegram_chat_id
+    s = repo.effective_settings()
+    token = s["telegram_bot_token"]
+    chat_id = s["telegram_chat_id"]
     if not token or not chat_id:
         return False
     try:

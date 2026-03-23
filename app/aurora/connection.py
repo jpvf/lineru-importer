@@ -1,15 +1,16 @@
 import pymysql
 import pymysql.cursors
-from app.config import settings
+from app.state import repository as repo
 
 
 def get_aurora_conn() -> pymysql.Connection:
+    s = repo.effective_settings()
     return pymysql.connect(
-        host=settings.aurora_host,
-        port=settings.aurora_port,
-        user=settings.aurora_user,
-        password=settings.aurora_password,
-        database=settings.aurora_schema,
+        host=s["aurora_host"],
+        port=s["aurora_port"],
+        user=s["aurora_user"],
+        password=s["aurora_password"],
+        database=s["aurora_schema"],
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
         connect_timeout=10,

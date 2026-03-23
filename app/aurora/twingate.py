@@ -2,7 +2,6 @@
 import socket
 import time
 import threading
-from app.config import settings
 from app.state import repository as repo
 from app.notifications.telegram import notify
 
@@ -12,9 +11,10 @@ _stop_event = threading.Event()
 
 def check_connectivity() -> tuple[bool, int | None, str | None]:
     """Try TCP connect to Aurora host:port. Returns (success, latency_ms, error)."""
+    s = repo.effective_settings()
     try:
         start = time.monotonic()
-        with socket.create_connection((settings.aurora_host, settings.aurora_port), timeout=10):
+        with socket.create_connection((s["aurora_host"], s["aurora_port"]), timeout=10):
             pass
         latency_ms = int((time.monotonic() - start) * 1000)
         return True, latency_ms, None
@@ -23,6 +23,7 @@ def check_connectivity() -> tuple[bool, int | None, str | None]:
 
 
 def _monitor_loop(on_failure=None):
+    # Run immediately on start, then on interval
     while not _stop_event.is_set():
         ok, latency, error = check_connectivity()
         repo.log_twingate_check(ok, latency, error)
@@ -32,7 +33,8 @@ def _monitor_loop(on_failure=None):
             if on_failure:
                 on_failure()
 
-        _stop_event.wait(settings.twingate_check_interval)
+        s = repo.effective_settings()
+        _stop_event.wait(s["twingate_check_interval"])
 
 
 def start_monitor(on_failure=None):

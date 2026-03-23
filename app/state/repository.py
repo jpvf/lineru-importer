@@ -225,6 +225,33 @@ def set_settings(data: dict):
         set_setting(k, str(v))
 
 
+def effective_settings() -> dict:
+    """Runtime settings: SQLite values override .env defaults."""
+    from app.config import settings as s
+    db = get_settings()
+
+    def val(key, default):
+        v = db.get(key)
+        return v if v else default
+
+    return {
+        "aurora_host":              val("aurora_host", s.aurora_host),
+        "aurora_port":              int(val("aurora_port", s.aurora_port)),
+        "aurora_user":              val("aurora_user", s.aurora_user),
+        "aurora_password":          val("aurora_password", s.aurora_password),
+        "aurora_schema":            val("aurora_schema", s.aurora_schema),
+        "local_host":               val("local_host", s.local_host),
+        "local_port":               int(val("local_port", s.local_port)),
+        "local_user":               val("local_user", s.local_user),
+        "local_password":           val("local_password", s.local_password),
+        "local_root_password":      val("local_root_password", s.local_root_password),
+        "batch_size":               int(val("batch_size", s.batch_size)),
+        "twingate_check_interval":  int(val("twingate_check_interval", s.twingate_check_interval)),
+        "telegram_bot_token":       val("telegram_bot_token", s.telegram_bot_token),
+        "telegram_chat_id":         val("telegram_chat_id", s.telegram_chat_id),
+    }
+
+
 # ─── Twingate ─────────────────────────────────────────────────────────────────
 
 def log_twingate_check(success: bool, latency_ms: int | None, error: str | None):

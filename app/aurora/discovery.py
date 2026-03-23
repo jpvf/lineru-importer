@@ -2,13 +2,14 @@
 import json
 from datetime import datetime, timezone
 from app.aurora.connection import get_aurora_conn
-from app.config import settings
+from app.state import repository as repo
 
 DATETIME_COL_NAMES = {"updated_at", "modified_at", "last_modified", "updated", "modified", "changed_at"}
 DATETIME_TYPES = {"datetime", "timestamp"}
 
 
 def discover_all() -> list[dict]:
+    s = repo.effective_settings()
     conn = get_aurora_conn()
     try:
         with conn.cursor() as cur:
@@ -23,7 +24,7 @@ def discover_all() -> list[dict]:
                 WHERE TABLE_SCHEMA = %s
                   AND TABLE_TYPE = 'BASE TABLE'
                 ORDER BY DATA_LENGTH DESC
-            """, (settings.aurora_schema,))
+            """, (s["aurora_schema"],))
             tables = cur.fetchall()
 
             # All columns with extra info for each table
@@ -37,7 +38,7 @@ def discover_all() -> list[dict]:
                 FROM information_schema.COLUMNS
                 WHERE TABLE_SCHEMA = %s
                 ORDER BY TABLE_NAME, ORDINAL_POSITION
-            """, (settings.aurora_schema,))
+            """, (s["aurora_schema"],))
             all_cols = cur.fetchall()
 
         # Group columns by table
@@ -82,7 +83,7 @@ def discover_all() -> list[dict]:
                 strategy = "full"
 
             result.append({
-                "schema_name":         settings.aurora_schema,
+                "schema_name":         s["aurora_schema"],
                 "table_name":          name,
                 "data_length_bytes":   t["data_length_bytes"],
                 "index_length_bytes":  t["index_length_bytes"],
@@ -104,13 +105,14 @@ def discover_all() -> list[dict]:
 
 def get_table_columns(conn, table_name: str) -> tuple[list[str], list[str]]:
     """Returns (insertable_cols, generated_cols) for a table."""
+    s = repo.effective_settings()
     with conn.cursor() as cur:
         cur.execute("""
             SELECT COLUMN_NAME, EXTRA
             FROM information_schema.COLUMNS
             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
             ORDER BY ORDINAL_POSITION
-        """, (settings.aurora_schema, table_name))
+        """, (s["aurora_schema"], table_name))
         cols = cur.fetchall()
 
     insertable = [c["COLUMN_NAME"] for c in cols if "generated" not in c["EXTRA"].lower()]
@@ -120,12 +122,13 @@ def get_table_columns(conn, table_name: str) -> tuple[list[str], list[str]]:
 
 def get_views(conn) -> list[dict]:
     """Returns list of {name, definition} for all views."""
+    s = repo.effective_settings()
     with conn.cursor() as cur:
         cur.execute("""
             SELECT TABLE_NAME as name
             FROM information_schema.VIEWS
             WHERE TABLE_SCHEMA = %s
-        """, (settings.aurora_schema,))
+        """, (s["aurora_schema"],))
         views = cur.fetchall()
 
     result = []
@@ -139,12 +142,13 @@ def get_views(conn) -> list[dict]:
 
 def get_routines(conn) -> list[dict]:
     """Returns list of {type, name, definition} for all SPs and functions."""
+    s = repo.effective_settings()
     with conn.cursor() as cur:
         cur.execute("""
             SELECT ROUTINE_TYPE as type, ROUTINE_NAME as name
             FROM information_schema.ROUTINES
             WHERE ROUTINE_SCHEMA = %s
-        """, (settings.aurora_schema,))
+        """, (s["aurora_schema"],))
         routines = cur.fetchall()
 
     result = []
