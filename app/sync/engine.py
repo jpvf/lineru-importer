@@ -112,9 +112,9 @@ class SyncEngine:
             name   = table["table_name"]
             schema = table["schema_name"]
 
-            # Skip DROP+CREATE if table already has synced data
+            # Skip DROP+CREATE if table already has synced data (regardless of status)
             state = repo.get_sync_state(schema, name)
-            if state and state.get("status") in ("done", "running", "paused") and (state.get("rows_synced") or 0) > 0:
+            if ((state or {}).get("rows_synced") or 0) > 0:
                 continue
 
             try:
