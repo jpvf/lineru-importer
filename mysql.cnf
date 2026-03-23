@@ -1,7 +1,7 @@
 [mysqld]
 # Tuning for large imports (200GB+)
-innodb_buffer_pool_size         = 4G
-innodb_log_file_size            = 512M
+innodb_buffer_pool_size         = 1G
+innodb_log_file_size            = 256M
 innodb_flush_log_at_trx_commit  = 2
 innodb_flush_method             = O_DIRECT
 bulk_insert_buffer_size         = 64M
