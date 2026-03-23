@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
+from fastapi.params import Body
 from app.state import repository as repo
 from app.sync import worker
 
@@ -21,7 +22,7 @@ def current_job():
 
 
 @router.post("")
-def start_job(body: dict = {}):
+def start_job(body: dict = Body(default={})):
     if worker.is_running():
         raise HTTPException(409, "A job is already running")
 
