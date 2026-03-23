@@ -46,7 +46,6 @@ class SyncEngine:
         try:
             ensure_database_exists()
             aurora = get_aurora_conn()
-            local  = get_local_conn()
 
             selected = repo.get_selected_tables()
             all_tables = repo.get_tables()
@@ -59,17 +58,18 @@ class SyncEngine:
             )
             notify(f"🚀 *Aurora Sync started* (job #{self.job_id})\n{len(selected)} tables selected for data, {len(all_tables)} for schema.")
 
-            # 1. Schema for ALL tables
-            self._sync_all_schemas(aurora, local, all_tables)
+            # 1. Schema for ALL tables (fresh local connection per table)
+            self._sync_all_schemas(aurora, all_tables)
             self.check_control()
 
             # 2. Views and routines
+            local = get_local_conn()
             self._sync_views_and_routines(aurora, local)
+            local.close()
             self.check_control()
 
             # 3. Data for selected tables — fresh connection per table
             aurora.close()
-            local.close()
 
             total_rows = sum(t.get("row_count_estimate") or 0 for t in selected)
             repo.update_job(self.job_id, rows_total=total_rows)
@@ -108,10 +108,7 @@ class SyncEngine:
 
     # ─── Schema ───────────────────────────────────────────────────────────────
 
-    def _sync_all_schemas(self, aurora, local, tables: list[dict]):
-        with local.cursor() as cur:
-            cur.execute("SET FOREIGN_KEY_CHECKS=0")
-
+    def _sync_all_schemas(self, aurora, tables: list[dict]):
         for table in tables:
             self.check_control()
             name   = table["table_name"]
@@ -128,23 +125,25 @@ class SyncEngine:
                     row = cur.fetchone()
                     ddl = row.get("Create Table", "")
 
-                # Strip AUTO_INCREMENT=N from table options to avoid sequence conflicts
                 ddl = re.sub(r'\s+AUTO_INCREMENT=\d+', '', ddl)
 
-                with local.cursor() as cur:
-                    cur.execute(f"DROP TABLE IF EXISTS `{name}`")
-                    cur.execute(ddl)
-                local.commit()
+                # Fresh local connection per table — avoids idle timeout on long schema runs
+                local = get_local_conn()
+                try:
+                    with local.cursor() as cur:
+                        cur.execute("SET FOREIGN_KEY_CHECKS=0")
+                        cur.execute(f"DROP TABLE IF EXISTS `{name}`")
+                        cur.execute(ddl)
+                        cur.execute("SET FOREIGN_KEY_CHECKS=1")
+                    local.commit()
+                finally:
+                    local.close()
+
             except Exception as e:
-                # Non-fatal: log and continue
                 repo.upsert_sync_state(
                     schema, name,
                     status="error", error_message=f"schema: {e}"
                 )
-
-        with local.cursor() as cur:
-            cur.execute("SET FOREIGN_KEY_CHECKS=1")
-        local.commit()
 
     # ─── Views & Routines ─────────────────────────────────────────────────────
 
@@ -230,7 +229,6 @@ class SyncEngine:
         finally:
             try:
                 aurora.close()
-                local.close()
             except Exception:
                 pass
 
