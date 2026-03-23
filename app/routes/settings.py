@@ -17,7 +17,9 @@ def get_settings():
 
 @router.put("")
 def update_settings(body: dict):
-    repo.set_settings(body)
+    # Never overwrite a sensitive field with the redacted placeholder "***"
+    filtered = {k: v for k, v in body.items() if not (k in SENSITIVE and v == "***")}
+    repo.set_settings(filtered)
     return {"status": "ok"}
 
 
