@@ -126,6 +126,9 @@ class SyncEngine:
                     ddl = row.get("Create Table", "")
 
                 ddl = re.sub(r'\s+AUTO_INCREMENT=\d+', '', ddl)
+                # Normalize Aurora's default collation to the one configured locally
+                ddl = ddl.replace('utf8mb4_0900_ai_ci', 'utf8mb4_unicode_ci')
+                ddl = ddl.replace('utf8mb3_general_ci', 'utf8mb4_unicode_ci')
 
                 # Fresh local connection per table — avoids idle timeout on long schema runs
                 local = get_local_conn()
