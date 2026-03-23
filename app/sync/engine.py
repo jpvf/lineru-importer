@@ -45,7 +45,6 @@ class SyncEngine:
         now = datetime.now(timezone.utc).isoformat()
         try:
             ensure_database_exists()
-            aurora = get_aurora_conn()
 
             selected = repo.get_selected_tables()
             all_tables = repo.get_tables()
@@ -58,18 +57,17 @@ class SyncEngine:
             )
             notify(f"🚀 *Aurora Sync started* (job #{self.job_id})\n{len(selected)} tables selected for data, {len(all_tables)} for schema.")
 
-            # 1. Schema for ALL tables (fresh local connection per table)
-            self._sync_all_schemas(aurora, all_tables)
+            # 1. Schema for ALL tables (fresh Aurora + local connection per table)
+            self._sync_all_schemas(all_tables)
             self.check_control()
 
             # 2. Views and routines
+            aurora = get_aurora_conn()
             local = get_local_conn()
             self._sync_views_and_routines(aurora, local)
             local.close()
-            self.check_control()
-
-            # 3. Data for selected tables — fresh connection per table
             aurora.close()
+            self.check_control()
 
             total_rows = sum(t.get("row_count_estimate") or 0 for t in selected)
             repo.update_job(self.job_id, rows_total=total_rows)
@@ -108,7 +106,7 @@ class SyncEngine:
 
     # ─── Schema ───────────────────────────────────────────────────────────────
 
-    def _sync_all_schemas(self, aurora, tables: list[dict]):
+    def _sync_all_schemas(self, tables: list[dict]):
         for table in tables:
             self.check_control()
             name   = table["table_name"]
@@ -120,10 +118,15 @@ class SyncEngine:
                 continue
 
             try:
-                with aurora.cursor() as cur:
-                    cur.execute(f"SHOW CREATE TABLE `{name}`")
-                    row = cur.fetchone()
-                    ddl = row.get("Create Table", "")
+                # Fresh Aurora connection per table — avoids stale connection across 944 tables
+                aurora = get_aurora_conn()
+                try:
+                    with aurora.cursor() as cur:
+                        cur.execute(f"SHOW CREATE TABLE `{name}`")
+                        row = cur.fetchone()
+                        ddl = row.get("Create Table", "")
+                finally:
+                    aurora.close()
 
                 ddl = re.sub(r'\s+AUTO_INCREMENT=\d+', '', ddl)
                 # Normalize Aurora's default collation to the one configured locally
