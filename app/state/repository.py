@@ -161,8 +161,9 @@ def get_job(job_id: int) -> dict | None:
 
 def get_current_job() -> dict | None:
     db = get_db()
+    # Active job first, then most recent finished job
     row = db.execute(
-        "SELECT * FROM jobs WHERE status IN ('running','paused') ORDER BY id DESC LIMIT 1"
+        "SELECT * FROM jobs ORDER BY CASE WHEN status IN ('running','paused') THEN 0 ELSE 1 END, id DESC LIMIT 1"
     ).fetchone()
     return dict_row(row)
 
