@@ -53,7 +53,10 @@ def resume_job(job_id: int):
     job = repo.get_job(job_id)
     if not job or job["status"] != "paused":
         raise HTTPException(400, "Job is not paused")
-    worker.resume()
+    if worker.is_running():
+        worker.resume()
+    else:
+        worker.start(job_id)
     repo.update_job(job_id, status="running", resumed_at=datetime.now(timezone.utc).isoformat())
     return {"status": "running"}
 

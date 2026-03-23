@@ -13,8 +13,9 @@ from app.routes import tables, jobs, progress, settings
 async def lifespan(app: FastAPI):
     # On startup: resume any interrupted job, start Twingate monitor
     interrupted = repo.get_current_job()
-    if interrupted and interrupted["status"] == "running":
+    if interrupted and interrupted["status"] in ("running", "paused"):
         repo.update_job(interrupted["id"], status="paused")
+        worker.start(interrupted["id"])
 
     def on_twingate_failure():
         current = repo.get_current_job()
