@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.aurora.twingate import start_monitor, stop_monitor
+from app.notifications.bot import start_bot, stop_bot
 from app.sync import worker
 from app.state import repository as repo
 from app.routes import tables, jobs, progress, settings
@@ -22,7 +23,9 @@ async def lifespan(app: FastAPI):
             repo.update_job(current["id"], status="paused")
 
     start_monitor(on_failure=on_twingate_failure)
+    start_bot()
     yield
+    stop_bot()
     stop_monitor()
 
 
