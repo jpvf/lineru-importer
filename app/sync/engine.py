@@ -8,7 +8,6 @@ from app.aurora.connection import get_aurora_conn
 from app.aurora.discovery import (
     get_table_columns, get_views, get_routines, get_row_count
 )
-from app.config import settings
 from app.local.connection import get_local_conn, ensure_database_exists
 from app.notifications.telegram import notify
 from app.state import repository as repo
@@ -24,7 +23,7 @@ class SyncEngine:
         self.job_id = job_id
         self.pause_event = pause_event
         self.cancel_event = cancel_event
-        self.batch_size = settings.batch_size
+        self.batch_size = int(repo.effective_settings()["batch_size"])
 
     # ─── Control ──────────────────────────────────────────────────────────────
 
@@ -114,7 +113,14 @@ class SyncEngine:
 
         for table in tables:
             self.check_control()
-            name = table["table_name"]
+            name   = table["table_name"]
+            schema = table["schema_name"]
+
+            # Skip DROP+CREATE if table already has synced data
+            state = repo.get_sync_state(schema, name)
+            if state and state.get("status") in ("done", "running", "paused") and (state.get("rows_synced") or 0) > 0:
+                continue
+
             try:
                 with aurora.cursor() as cur:
                     cur.execute(f"SHOW CREATE TABLE `{name}`")
@@ -131,7 +137,7 @@ class SyncEngine:
             except Exception as e:
                 # Non-fatal: log and continue
                 repo.upsert_sync_state(
-                    table["schema_name"], name,
+                    schema, name,
                     status="error", error_message=f"schema: {e}"
                 )
 
