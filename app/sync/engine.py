@@ -63,14 +63,17 @@ class SyncEngine:
             self._sync_views_and_routines(aurora, local)
             self.check_control()
 
-            # 3. Data for selected tables
+            # 3. Data for selected tables — fresh connection per table
+            aurora.close()
+            local.close()
+
             total_rows = sum(t.get("row_count_estimate") or 0 for t in selected)
             repo.update_job(self.job_id, rows_total=total_rows)
 
             rows_done = 0
             for i, table in enumerate(selected):
                 self.check_control()
-                rows = self._sync_table_data(aurora, local, table)
+                rows = self._sync_table_data(table)
                 rows_done += rows
                 repo.update_job(self.job_id, tables_done=i + 1, rows_done=rows_done)
 
@@ -96,14 +99,6 @@ class SyncEngine:
                 error_message=str(e)[:500]
             )
             notify(f"❌ *Aurora Sync ERROR* (job #{self.job_id})\n`{str(e)[:200]}`")
-            raise
-
-        finally:
-            try:
-                aurora.close()
-                local.close()
-            except Exception:
-                pass
 
     # ─── Schema ───────────────────────────────────────────────────────────────
 
@@ -175,26 +170,32 @@ class SyncEngine:
 
     # ─── Data ─────────────────────────────────────────────────────────────────
 
-    def _sync_table_data(self, aurora, local, table: dict) -> int:
+    def _sync_table_data(self, table: dict) -> int:
         name     = table["table_name"]
         schema   = table["schema_name"]
         strategy = table["cursor_strategy"]
 
-        insertable_cols, _ = get_table_columns(aurora, name)
-        if not insertable_cols:
-            return 0
-
-        # Exact row count for progress
-        total = get_row_count(aurora, name)
-        log_id = repo.create_job_table_log(self.job_id, schema, name, total)
-        repo.upsert_sync_state(schema, name, status="running", total_rows_at_start=total)
-        repo.update_job_table_log(
-            log_id, status="running",
-            started_at=datetime.now(timezone.utc).isoformat(),
-            rows_total=total
-        )
+        aurora = get_aurora_conn()
+        local  = get_local_conn()
+        # Allow zero dates and other Aurora quirks in the local MySQL session
+        with local.cursor() as cur:
+            cur.execute("SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'")
+        local.commit()
 
         try:
+            insertable_cols, _ = get_table_columns(aurora, name)
+            if not insertable_cols:
+                return 0
+
+            total  = get_row_count(aurora, name)
+            log_id = repo.create_job_table_log(self.job_id, schema, name, total)
+            repo.upsert_sync_state(schema, name, status="running", total_rows_at_start=total)
+            repo.update_job_table_log(
+                log_id, status="running",
+                started_at=datetime.now(timezone.utc).isoformat(),
+                rows_total=total
+            )
+
             if strategy == "auto_increment":
                 rows_done = self._sync_auto_increment(aurora, local, name, schema, insertable_cols, log_id)
             elif strategy == "datetime":
@@ -220,11 +221,18 @@ class SyncEngine:
             repo.update_job_table_log(log_id, status="error", error_message=str(e)[:300])
             return 0
 
+        finally:
+            try:
+                aurora.close()
+                local.close()
+            except Exception:
+                pass
+
     def _sync_auto_increment(self, aurora, local, name, schema, cols, log_id) -> int:
-        pk_col   = repo.get_table(schema, name)["auto_increment_col"]
-        state    = repo.get_sync_state(schema, name)
-        last_id  = (state or {}).get("last_synced_id") or 0
-        col_list = ", ".join(f"`{c}`" for c in cols)
+        pk_col    = repo.get_table(schema, name)["auto_increment_col"]
+        state     = repo.get_sync_state(schema, name)
+        last_id   = (state or {}).get("last_synced_id") or 0
+        col_list  = ", ".join(f"`{c}`" for c in cols)
         rows_done = (state or {}).get("rows_synced") or 0
 
         while True:
@@ -248,10 +256,10 @@ class SyncEngine:
         return rows_done
 
     def _sync_datetime(self, aurora, local, name, schema, cols, log_id) -> int:
-        dt_col   = repo.get_table(schema, name)["updated_at_col"]
-        state    = repo.get_sync_state(schema, name)
-        last_dt  = (state or {}).get("last_synced_at") or "1970-01-01 00:00:00"
-        col_list = ", ".join(f"`{c}`" for c in cols)
+        dt_col    = repo.get_table(schema, name)["updated_at_col"]
+        state     = repo.get_sync_state(schema, name)
+        last_dt   = (state or {}).get("last_synced_at") or "1970-01-01 00:00:00"
+        col_list  = ", ".join(f"`{c}`" for c in cols)
         rows_done = (state or {}).get("rows_synced") or 0
 
         while True:
@@ -273,19 +281,17 @@ class SyncEngine:
             repo.upsert_sync_state(schema, name, last_synced_at=last_dt, rows_synced=rows_done)
             repo.update_job_table_log(log_id, rows_synced=rows_done)
 
-            # Avoid infinite loop when all rows share same timestamp
             if len(batch) < self.batch_size:
                 break
 
         return rows_done
 
     def _sync_full_offset(self, aurora, local, name, schema, cols, log_id) -> int:
-        state    = repo.get_sync_state(schema, name)
-        offset   = (state or {}).get("last_offset") or 0
-        col_list = ", ".join(f"`{c}`" for c in cols)
+        state     = repo.get_sync_state(schema, name)
+        offset    = (state or {}).get("last_offset") or 0
+        col_list  = ", ".join(f"`{c}`" for c in cols)
         rows_done = offset
 
-        # Truncate only on fresh start
         if offset == 0:
             with local.cursor() as cur:
                 cur.execute(f"TRUNCATE TABLE `{name}`")
