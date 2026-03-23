@@ -3,6 +3,8 @@ import logging
 import re
 import threading
 import time
+import pymysql
+import pymysql.cursors
 import traceback
 from datetime import datetime, timezone
 
@@ -61,12 +63,8 @@ class SyncEngine:
             self._sync_all_schemas(all_tables)
             self.check_control()
 
-            # 2. Views and routines
-            aurora = get_aurora_conn()
-            local = get_local_conn()
-            self._sync_views_and_routines(aurora, local)
-            local.close()
-            aurora.close()
+            # 2. Views and routines (manages its own connections with short timeout)
+            self._sync_views_and_routines()
             self.check_control()
 
             total_rows = sum(t.get("row_count_estimate") or 0 for t in selected)
@@ -154,29 +152,72 @@ class SyncEngine:
 
     # ─── Views & Routines ─────────────────────────────────────────────────────
 
-    def _sync_views_and_routines(self, aurora, local):
-        # Views
-        for view in get_views(aurora):
-            self.check_control()
+    def _sync_views_and_routines(self):
+        s = repo.effective_settings()
+        # Use a short-timeout Aurora connection — SHOW CREATE VIEW/PROCEDURE can hang
+        aurora = pymysql.connect(
+            host=s["aurora_host"], port=s["aurora_port"],
+            user=s["aurora_user"], password=s["aurora_password"],
+            database=s["aurora_schema"], charset="utf8mb4",
+            cursorclass=__import__("pymysql").cursors.DictCursor,
+            connect_timeout=10, read_timeout=30, write_timeout=30,
+        )
+        local = get_local_conn()
+        try:
+            # Views — fetch list first, then each definition individually
             try:
-                defn = view["definition"]
-                defn = re.sub(r'CREATE\s+.*?VIEW', 'CREATE OR REPLACE VIEW', defn, flags=re.IGNORECASE)
-                with local.cursor() as cur:
-                    cur.execute(defn)
-                local.commit()
+                with aurora.cursor() as cur:
+                    cur.execute("SELECT TABLE_NAME as name FROM information_schema.VIEWS WHERE TABLE_SCHEMA=%s", (s["aurora_schema"],))
+                    view_names = [r["name"] for r in cur.fetchall()]
+            except Exception:
+                view_names = []
+
+            for name in view_names:
+                self.check_control()
+                try:
+                    with aurora.cursor() as cur:
+                        cur.execute(f"SHOW CREATE VIEW `{name}`")
+                        row = cur.fetchone()
+                    defn = row.get("Create View", "")
+                    defn = re.sub(r'CREATE\s+.*?VIEW', 'CREATE OR REPLACE VIEW', defn, flags=re.IGNORECASE)
+                    defn = defn.replace('utf8mb4_0900_ai_ci', 'utf8mb4_unicode_ci')
+                    with local.cursor() as cur:
+                        cur.execute(defn)
+                    local.commit()
+                except Exception:
+                    pass
+
+            # Routines — fetch list first, then each definition individually
+            try:
+                with aurora.cursor() as cur:
+                    cur.execute("SELECT ROUTINE_TYPE as type, ROUTINE_NAME as name FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=%s", (s["aurora_schema"],))
+                    routines = cur.fetchall()
+            except Exception:
+                routines = []
+
+            for r in routines:
+                self.check_control()
+                try:
+                    with aurora.cursor() as cur:
+                        if r["type"] == "PROCEDURE":
+                            cur.execute(f"SHOW CREATE PROCEDURE `{r['name']}`")
+                            defn = cur.fetchone().get("Create Procedure", "")
+                        else:
+                            cur.execute(f"SHOW CREATE FUNCTION `{r['name']}`")
+                            defn = cur.fetchone().get("Create Function", "")
+                    with local.cursor() as cur:
+                        cur.execute(f"DROP {r['type']} IF EXISTS `{r['name']}`")
+                        cur.execute(defn)
+                    local.commit()
+                except Exception:
+                    pass
+        finally:
+            try:
+                aurora.close()
             except Exception:
                 pass
-
-        # Stored procedures and functions
-        for routine in get_routines(aurora):
-            self.check_control()
             try:
-                with local.cursor() as cur:
-                    rtype = routine["type"]
-                    rname = routine["name"]
-                    cur.execute(f"DROP {rtype} IF EXISTS `{rname}`")
-                    cur.execute(routine["definition"])
-                local.commit()
+                local.close()
             except Exception:
                 pass
 
