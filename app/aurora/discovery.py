@@ -85,9 +85,9 @@ def discover_all() -> list[dict]:
             result.append({
                 "schema_name":         s["aurora_schema"],
                 "table_name":          name,
-                "data_length_bytes":   t["data_length_bytes"],
-                "index_length_bytes":  t["index_length_bytes"],
-                "row_count_estimate":  t["row_count_estimate"],
+                "data_length_bytes":   int(t["data_length_bytes"] or 0),
+                "index_length_bytes":  int(t["index_length_bytes"] or 0),
+                "row_count_estimate":  int(t["row_count_estimate"] or 0),
                 "has_auto_increment":  1 if auto_inc_col else 0,
                 "auto_increment_col":  auto_inc_col,
                 "has_updated_at":      1 if updated_at_col else 0,
