@@ -110,9 +110,19 @@ class SyncEngine:
             name   = table["table_name"]
             schema = table["schema_name"]
 
-            # Skip DROP+CREATE if table already has synced data (regardless of status)
-            state = repo.get_sync_state(schema, name)
-            if ((state or {}).get("rows_synced") or 0) > 0:
+            # Skip if table already exists locally — avoids slow schema re-run on resume
+            local_check = get_local_conn()
+            try:
+                with local_check.cursor() as cur:
+                    cur.execute(
+                        "SELECT COUNT(*) as c FROM information_schema.TABLES "
+                        "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND TABLE_TYPE='BASE TABLE'",
+                        (name,)
+                    )
+                    exists_locally = cur.fetchone()["c"] > 0
+            finally:
+                local_check.close()
+            if exists_locally:
                 continue
 
             try:
