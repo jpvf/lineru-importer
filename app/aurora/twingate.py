@@ -22,8 +22,9 @@ def check_connectivity() -> tuple[bool, int | None, str | None]:
         return False, None, str(e)
 
 
-def _monitor_loop(on_failure=None):
+def _monitor_loop(on_failure=None, on_recovery=None):
     # Run immediately on start, then on interval
+    was_down = False
     while not _stop_event.is_set():
         ok, latency, error = check_connectivity()
         repo.log_twingate_check(ok, latency, error)
@@ -32,17 +33,24 @@ def _monitor_loop(on_failure=None):
             notify(f"⚠️ *Twingate / Aurora unreachable*\n`{error}`\nSync paused if running.")
             if on_failure:
                 on_failure()
+            was_down = True
+        elif was_down:
+            # Just recovered from a failure
+            notify("✅ *Twingate / Aurora back online* — resuming sync.")
+            if on_recovery:
+                on_recovery()
+            was_down = False
 
         s = repo.effective_settings()
         _stop_event.wait(s["twingate_check_interval"])
 
 
-def start_monitor(on_failure=None):
+def start_monitor(on_failure=None, on_recovery=None):
     global _monitor_thread, _stop_event
     _stop_event.clear()
     _monitor_thread = threading.Thread(
         target=_monitor_loop,
-        args=(on_failure,),
+        args=(on_failure, on_recovery),
         daemon=True,
         name="twingate-monitor"
     )

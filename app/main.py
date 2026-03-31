@@ -23,7 +23,13 @@ async def lifespan(app: FastAPI):
             worker.pause()
             repo.update_job(current["id"], status="paused")
 
-    start_monitor(on_failure=on_twingate_failure)
+    def on_twingate_recovery():
+        current = repo.get_current_job()
+        if current and current["status"] == "paused":
+            repo.update_job(current["id"], status="paused")
+            worker.start(current["id"])
+
+    start_monitor(on_failure=on_twingate_failure, on_recovery=on_twingate_recovery)
     start_bot()
     yield
     stop_bot()
