@@ -70,12 +70,23 @@ class SyncEngine:
             total_rows = sum(t.get("row_count_estimate") or 0 for t in selected)
             repo.update_job(self.job_id, rows_total=total_rows)
 
+            # Count already-done tables so resume starts from correct offset
             rows_done = 0
+            tables_done = 0
             for i, table in enumerate(selected):
                 self.check_control()
+                name   = table["table_name"]
+                schema = table["schema_name"]
+                state  = repo.get_sync_state(schema, name)
+                if state and state.get("status") == "done":
+                    rows_done   += state.get("rows_synced") or 0
+                    tables_done += 1
+                    repo.update_job(self.job_id, tables_done=tables_done, rows_done=rows_done)
+                    continue
                 rows = self._sync_table_data(table)
-                rows_done += rows
-                repo.update_job(self.job_id, tables_done=i + 1, rows_done=rows_done)
+                rows_done   += rows
+                tables_done += 1
+                repo.update_job(self.job_id, tables_done=tables_done, rows_done=rows_done)
 
             repo.update_job(
                 self.job_id,
@@ -240,9 +251,10 @@ class SyncEngine:
 
         aurora = get_aurora_conn()
         local  = get_local_conn()
-        # Allow zero dates and other Aurora quirks in the local MySQL session
+        # Allow zero dates, skip FK checks to handle out-of-order inserts
         with local.cursor() as cur:
             cur.execute("SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'")
+            cur.execute("SET SESSION FOREIGN_KEY_CHECKS=0")
         local.commit()
 
         try:
