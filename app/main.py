@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
 
     def on_twingate_recovery():
         current = repo.get_current_job()
-        if current and current["status"] == "paused":
+        if current and current["status"] in ("paused", "error"):
             repo.update_job(current["id"], status="paused")
             worker.start(current["id"])
 
