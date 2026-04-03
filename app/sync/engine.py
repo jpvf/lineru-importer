@@ -271,6 +271,13 @@ class SyncEngine:
                 rows_total=total
             )
 
+            if strategy == "full":
+                # No cursor available — skip data sync for this table
+                repo.upsert_sync_state(schema, name, status="done", rows_synced=0)
+                repo.update_job_table_log(log_id, status="done", rows_synced=0,
+                                          completed_at=datetime.now(timezone.utc).isoformat())
+                return 0
+
             if strategy == "auto_increment":
                 rows_done = self._sync_auto_increment(aurora, local, name, schema, insertable_cols, log_id)
             elif strategy == "datetime":
